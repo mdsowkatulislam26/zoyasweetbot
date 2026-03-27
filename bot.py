@@ -5,6 +5,7 @@ import threading
 import edge_tts
 from datetime import datetime, time as dt_time
 from openai import OpenAI
+from flask import Flask
 from telegram import Update
 from telegram.ext import (
     ApplicationBuilder,
@@ -238,7 +239,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if user_id == OWNER_ID:
         mode = "owner"
-        user_name = context.user_data.get("custom_name", USER_NAME)
+        user_name = context.user_data.get("custom_name", OWNER_NAME)
     elif is_apu:
         mode = "apu"
         user_name = "Apu"
@@ -295,15 +296,34 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=salam)
 
 # =========================
+# WEB SERVER (keeps Render happy)
+# =========================
+web_app = Flask(__name__)
+
+@web_app.route("/")
+def home():
+    return "Zoya is alive 💖", 200
+
+@web_app.route("/health")
+def health():
+    return "OK", 200
+
+def run_web():
+    port = int(os.environ.get("PORT", 8000))
+    web_app.run(host="0.0.0.0", port=port)
+
+# =========================
 # MAIN
 # =========================
 def main():
-    threading.Thread(target=run_web).start()
-
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN environment variable is not set!")
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY environment variable is not set!")
+
+    web_thread = threading.Thread(target=run_web, daemon=True)
+    web_thread.start()
+    print(f"🌐 Web server started on port {os.environ.get('PORT', 8000)}")
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
