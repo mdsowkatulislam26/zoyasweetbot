@@ -150,7 +150,7 @@ async def speak_text(reply, user_id, lang="english"):
 # COMMANDS
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"💖 Assalamu Alaikum {OWNER_NAME}...\nAmi Zoya 😊")
+    await update.message.reply_text(f"💖 Assalamu Alaikum {User_name}...\nAmi Zoya 😊")
     if update.message.from_user.id == OWNER_ID:
         context.bot_data["owner_chat_id"] = update.message.chat_id
         context.user_data["lang"] = "banglish"
@@ -256,6 +256,8 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
 # MAIN
 # =========================
 def main():
+    threading.Thread(target=run_web).start()
+
     if not TELEGRAM_TOKEN:
         raise ValueError("TELEGRAM_TOKEN environment variable is not set!")
     if not GROQ_API_KEY:
