@@ -325,6 +325,10 @@ def main():
     web_thread.start()
     print(f"🌐 Web server started on port {os.environ.get('PORT', 8000)}")
 
+    # Python 3.10+ requires an explicit event loop in the main thread
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     app.add_handler(CommandHandler("start", start))
