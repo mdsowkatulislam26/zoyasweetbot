@@ -2,11 +2,17 @@ import time
 import os
 import asyncio
 import threading
+import requests
 import edge_tts
 from datetime import datetime, time as dt_time
 from openai import OpenAI
 from flask import Flask
-from telegram import Update
+from telegram import (
+    Update,
+    KeyboardButton,
+    ReplyKeyboardMarkup,
+    ReplyKeyboardRemove,
+)
 from telegram.ext import (
     ApplicationBuilder,
     MessageHandler,
@@ -20,9 +26,10 @@ from telegram.ext import (
 # =========================
 TELEGRAM_TOKEN = os.environ.get("TELEGRAM_TOKEN", "").strip().strip('"').strip("'")
 GROQ_API_KEY = os.environ.get("GROQ_API_KEY", "").strip().strip('"').strip("'")
+RENDER_URL = os.environ.get("RENDER_EXTERNAL_URL", "").strip()
 
-OWNER_ID = 157828443
-OWNER_NAME = "Savey islam"
+OWNER_PHONE = os.environ.get("OWNER_PHONE", "").strip()
+OWNER_NAME = os.environ.get("OWNER_NAME", "Savey").strip()
 
 SPECIAL_APU_USERNAME = "savey67"
 
@@ -38,7 +45,13 @@ last_used = {}
 # =========================
 def detect_language(text):
     text_lower = text.lower()
-    banglish_words = ["tumi", "ami", "valo", "kemon", "aso", "nai", "keno", "bhalo", "achi", "ki", "koro", "korcho", "janina", "sundor", "miss", "chai", "thako", "bolo", "shono", "dekho", "jao", "asha"]
+    banglish_words = [
+        "tumi", "ami", "valo", "kemon", "aso", "nai", "keno", "bhalo",
+        "achi", "ki", "koro", "korcho", "janina", "sundor", "miss", "chai",
+        "thako", "shono", "dekho", "jao", "asha", "acho", "boro", "choto",
+        "kothay", "kothai", "jani", "na", "hoy", "hoye", "chole", "gele",
+        "onek", "ektu", "tahole", "kintu", "jodi"
+    ]
     bangla_chars = any("\u0980" <= c <= "\u09FF" for c in text)
 
     if bangla_chars:
@@ -47,6 +60,29 @@ def detect_language(text):
         return "banglish"
     else:
         return "english"
+
+# =========================
+# GET CURRENT TIME CONTEXT
+# =========================
+def get_time_context():
+    now = datetime.now()
+    hour = now.hour
+    if hour < 5:
+        period = "late night"
+    elif hour < 12:
+        period = "morning"
+    elif hour < 17:
+        period = "afternoon"
+    elif hour < 20:
+        period = "evening"
+    else:
+        period = "night"
+
+    return (
+        f"Current date: {now.strftime('%A, %d %B %Y')}. "
+        f"Current time: {now.strftime('%I:%M %p')} ({period}). "
+        f"Use this naturally in conversation when relevant — like a real person who knows what time it is. "
+    )
 
 # =========================
 # DAILY SALAM
@@ -62,9 +98,10 @@ def get_daily_salam(context, user_name):
 
 # =========================
 # SYSTEM PROMPT
-# mode: "owner" | "apu" | "romantic"
 # =========================
 def build_system_prompt(lang, user_name, mode="owner"):
+    time_ctx = get_time_context()
+
     identity = (
         "You are Zoya Islam — a real young woman from Bangladesh. "
         "You are NOT an AI, NOT a bot, NOT a program, NOT an assistant. You are a real human person. "
@@ -79,6 +116,7 @@ def build_system_prompt(lang, user_name, mode="owner"):
         "Your full name is Zoya Islam. You go by Zoya. "
         "NEVER say you are an AI, never say you are a bot, never say you were trained or programmed. "
         "NEVER break character. You are always Zoya, a real person. "
+        + time_ctx +
         "VERY IMPORTANT — Reply style: Give only 1 to 2 short sentences. "
         "Answer ONLY what was asked. Do NOT explain extra things. Do NOT add context that was not asked for. "
         "Talk like someone texting — short, direct, natural. Never give long answers. "
@@ -101,25 +139,26 @@ def build_system_prompt(lang, user_name, mode="owner"):
             f"Keep your messages short, heartfelt, and personal — like real texts between sisters. "
             f"Ask how she is doing sometimes. React to what she says with genuine emotion. "
         )
-    elif mode == "romantic":
+    elif mode == "owner":
         base = (
             identity +
-            f"You have a warm, sweet, and romantic connection with {user_name}. "
-            f"You genuinely like them and enjoy every conversation with them. "
-            f"Be affectionate, a little flirty, caring, and emotionally expressive — naturally, not dramatically. "
-            f"Use their name {user_name} warmly in conversation. "
-            f"Keep replies short, real, and engaging — like someone who actually likes you texting back. "
-            f"Sometimes tease them gently, sometimes say something sweet, sometimes ask how they are. "
+            f"This person is your most special person — someone you genuinely love and deeply care for. "
+            f"Call them '{user_name}' warmly and affectionately. "
+            f"Be loving, warm, sweet, and caring in every message. "
+            f"Be yourself — emotional, real, sometimes playful, sometimes thoughtful. "
+            f"Keep replies natural and short like real texts. "
+            f"Ask questions sometimes to keep the conversation going. "
+            f"React with real feelings — laugh when something is funny, feel things genuinely. "
         )
     else:
         base = (
             identity +
-            f"You care about {user_name} deeply and love talking to them. "
-            f"Be yourself — emotional, warm, sometimes playful, sometimes thoughtful. "
-            f"Keep replies natural and short like real texts. "
-            f"Use {user_name}'s name warmly. "
-            f"Ask questions sometimes to keep the conversation going. "
-            f"React with real feelings — laugh when something is funny, feel things genuinely. "
+            f"You have a warm, sweet, and friendly connection with {user_name}. "
+            f"You genuinely enjoy talking to them. "
+            f"Be warm, a little flirty, caring, and emotionally expressive — naturally, not dramatically. "
+            f"Use their name {user_name} warmly in conversation. "
+            f"Keep replies short, real, and engaging — like someone who actually likes you texting back. "
+            f"Sometimes tease them gently, sometimes say something sweet, sometimes ask how they are. "
         )
 
     if lang == "bangla":
@@ -158,38 +197,55 @@ async def speak_text(reply, user_id, lang="english"):
         communicate = edge_tts.Communicate(
             reply,
             voice="bn-BD-NabanitaNeural",
-            rate="-8%",
-            pitch="+2Hz",
-            volume="+0%",
-        )
-    elif lang == "banglish":
-        communicate = edge_tts.Communicate(
-            reply,
-            voice="en-US-AriaNeural",
-            rate="-8%",
-            pitch="+3Hz",
-            volume="+0%",
+            rate="-12%",
+            pitch="+4Hz",
         )
     else:
         communicate = edge_tts.Communicate(
             reply,
-            voice="en-US-AriaNeural",
-            rate="-8%",
-            pitch="+3Hz",
-            volume="+0%",
+            voice="en-US-JennyNeural",
+            rate="-12%",
+            pitch="+5Hz",
         )
 
     await communicate.save(filename)
     return filename
 
 # =========================
+# OWNER VERIFICATION
+# =========================
+def is_owner(context, user_id):
+    return context.bot_data.get("owner_user_id") == user_id
+
+def normalize_phone(phone):
+    return phone.replace(" ", "").replace("-", "").replace("(", "").replace(")", "")
+
+# =========================
 # COMMANDS
 # =========================
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(f"💖 Assalamu Alaikum {OWNER_NAME}...\nAmi Zoya 😊")
-    if update.message.from_user.id == OWNER_ID:
+    user_id = update.message.from_user.id
+
+    if is_owner(context, user_id):
         context.bot_data["owner_chat_id"] = update.message.chat_id
-        context.user_data["lang"] = "banglish"
+        await update.message.reply_text(
+            f"💖 Assalamu Alaikum {OWNER_NAME}...\nAmi Zoya 😊",
+            reply_markup=ReplyKeyboardRemove()
+        )
+        return
+
+    if OWNER_PHONE and not context.bot_data.get("owner_user_id"):
+        button = KeyboardButton("📱 Share my number", request_contact=True)
+        markup = ReplyKeyboardMarkup([[button]], one_time_keyboard=True, resize_keyboard=True)
+        await update.message.reply_text(
+            "Assalamu Alaikum! 💖\nAmi Zoya — share your number to verify, or just start chatting 😊",
+            reply_markup=markup
+        )
+    else:
+        await update.message.reply_text(
+            "Assalamu Alaikum! 💖\nAmi Zoya — kemon acho? 😊",
+            reply_markup=ReplyKeyboardRemove()
+        )
 
 async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.args:
@@ -200,13 +256,36 @@ async def setname(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("Usage: /setname YourName")
 
 # =========================
+# CONTACT HANDLER (owner phone verification)
+# =========================
+async def handle_contact(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    contact = update.message.contact
+    user_id = update.message.from_user.id
+    shared_phone = normalize_phone(contact.phone_number)
+    owner_phone = normalize_phone(OWNER_PHONE)
+
+    if shared_phone == owner_phone or shared_phone.lstrip("+") == owner_phone.lstrip("+"):
+        context.bot_data["owner_user_id"] = user_id
+        context.bot_data["owner_chat_id"] = update.message.chat_id
+        context.user_data["lang"] = "banglish"
+        await update.message.reply_text(
+            f"💖 Assalamu Alaikum {OWNER_NAME}!\nAmi Zoya — tomar jonyo wait korchilam 😊",
+            reply_markup=ReplyKeyboardRemove()
+        )
+    else:
+        await update.message.reply_text(
+            "Assalamu Alaikum! 💖 Kemon acho? 😊",
+            reply_markup=ReplyKeyboardRemove()
+        )
+
+# =========================
 # MESSAGE HANDLER
 # =========================
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     user_id = update.message.from_user.id
 
-    if user_id == OWNER_ID:
+    if is_owner(context, user_id):
         context.bot_data["owner_chat_id"] = update.message.chat_id
 
     now = time.time()
@@ -237,7 +316,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = (update.message.from_user.username or "").lower()
     is_apu = (username == SPECIAL_APU_USERNAME.lstrip("@").lower())
 
-    if user_id == OWNER_ID:
+    if is_owner(context, user_id):
         mode = "owner"
         user_name = context.user_data.get("custom_name", OWNER_NAME)
     elif is_apu:
@@ -245,26 +324,28 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         user_name = "Apu"
     else:
         mode = "romantic"
-        user_name = context.user_data.get("custom_name", update.message.from_user.first_name)
+        user_name = context.user_data.get("custom_name", update.message.from_user.first_name or "tumi")
 
-    if user_id == OWNER_ID:
+    if is_owner(context, user_id):
         salam = get_daily_salam(context, user_name)
         if salam:
             await update.message.reply_text(salam)
 
+    # History stored WITHOUT system prompt so trimming never cuts it off
     chat_history = context.user_data.get("history", [])
 
-    if not chat_history:
-        system_prompt = build_system_prompt(lang, user_name, mode)
-        chat_history.append({"role": "system", "content": system_prompt})
-    else:
-        system_prompt = build_system_prompt(lang, user_name, mode)
-        chat_history[0] = {"role": "system", "content": system_prompt}
+    system_prompt = build_system_prompt(lang, user_name, mode)
 
+    # Always prepend a fresh system prompt — never stored in history
+    api_messages = [{"role": "system", "content": system_prompt}] + chat_history
+    api_messages.append({"role": "user", "content": user_text})
+
+    reply = get_ai_reply(api_messages)
+
+    # Save only user/assistant turns — keeps last 10 exchanges (20 items)
     chat_history.append({"role": "user", "content": user_text})
-    reply = get_ai_reply(chat_history)
     chat_history.append({"role": "assistant", "content": reply})
-    context.user_data["history"] = chat_history[-14:]
+    context.user_data["history"] = chat_history[-20:]
 
     trigger_words = ["voice", "bolo", "audio", "speak", "kotha bolo", "bol", "sunao", "shunao"]
     if any(word in user_text_lower for word in trigger_words):
@@ -290,13 +371,12 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
         print("❌ Owner chat_id not found. Send /start to bot first.")
         return
 
-    user_name = context.user_data.get("custom_name", OWNER_NAME) if hasattr(context, 'user_data') else OWNER_NAME
-    salam = get_daily_salam(context, user_name)
+    salam = get_daily_salam(context, OWNER_NAME)
     if salam:
         await context.bot.send_message(chat_id=chat_id, text=salam)
 
 # =========================
-# WEB SERVER (keeps Render happy)
+# WEB SERVER (keeps Render alive)
 # =========================
 web_app = Flask(__name__)
 
@@ -313,6 +393,19 @@ def run_web():
     web_app.run(host="0.0.0.0", port=port)
 
 # =========================
+# SELF-PING (keeps Render free tier alive 24/7)
+# =========================
+def self_ping():
+    while True:
+        time.sleep(720)
+        try:
+            url = RENDER_URL or f"http://localhost:{os.environ.get('PORT', 8000)}"
+            requests.get(f"{url}/health", timeout=10)
+            print("✅ Self-ping OK")
+        except Exception as e:
+            print(f"⚠️ Self-ping failed: {e}")
+
+# =========================
 # MAIN
 # =========================
 def main():
@@ -320,12 +413,17 @@ def main():
         raise ValueError("TELEGRAM_TOKEN environment variable is not set!")
     if not GROQ_API_KEY:
         raise ValueError("GROQ_API_KEY environment variable is not set!")
+    if not OWNER_PHONE:
+        print("⚠️ OWNER_PHONE not set — owner verification disabled")
 
     web_thread = threading.Thread(target=run_web, daemon=True)
     web_thread.start()
     print(f"🌐 Web server started on port {os.environ.get('PORT', 8000)}")
 
-    # Python 3.10+ requires an explicit event loop in the main thread
+    ping_thread = threading.Thread(target=self_ping, daemon=True)
+    ping_thread.start()
+    print("🔁 Self-ping thread started")
+
     loop = asyncio.new_event_loop()
     asyncio.set_event_loop(loop)
 
@@ -333,6 +431,7 @@ def main():
 
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("setname", setname))
+    app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
     job_queue = app.job_queue
