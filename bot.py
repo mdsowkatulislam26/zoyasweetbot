@@ -7,6 +7,7 @@ import edge_tts
 from datetime import datetime, time as dt_time
 from openai import OpenAI
 from flask import Flask
+from waitress import serve
 from telegram import (
     Update,
     KeyboardButton,
@@ -397,7 +398,7 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=salam)
 
 # =========================
-# WEB SERVER (keeps Render alive)
+# WEB SERVER (production WSGI — keeps Render alive)
 # =========================
 web_app = Flask(__name__)
 
@@ -411,7 +412,7 @@ def health():
 
 def run_web():
     port = int(os.environ.get("PORT", 8000))
-    web_app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
+    serve(web_app, host="0.0.0.0", port=port)
 
 # =========================
 # SELF-PING (keeps Render free tier alive 24/7)
