@@ -2,4 +2,5 @@ python-telegram-bot[job-queue]==21.6
 openai
 edge-tts
 flask
+waitress
 requests
