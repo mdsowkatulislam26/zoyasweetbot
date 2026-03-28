@@ -361,7 +361,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         chat_history.append({"role": "assistant", "content": reply})
         context.user_data["history"] = chat_history[-12:]
 
-        trigger_words = ["voice", "bolo", "audio", "speak", "kotha bolo", "bol", "sunao", "shunao"]
+        trigger_words = ["voice", "audio", "speak", "kotha bolo", "sunao", "shunao", "voice note", "voice message"]
         if any(word in user_text_lower for word in trigger_words):
             try:
                 await update.message.chat.send_action(action="record_voice")
@@ -411,7 +411,7 @@ def health():
 
 def run_web():
     port = int(os.environ.get("PORT", 8000))
-    web_app.run(host="0.0.0.0", port=port)
+    web_app.run(host="0.0.0.0", port=port, use_reloader=False, threaded=True)
 
 # =========================
 # SELF-PING (keeps Render free tier alive 24/7)
@@ -465,7 +465,7 @@ def main():
         print("❌ Install job queue: pip install 'python-telegram-bot[job-queue]'")
 
     print("💖 Zoya Bot running...")
-    app.run_polling()
+    app.run_polling(drop_pending_updates=True)
 
 if __name__ == "__main__":
     main()
