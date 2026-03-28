@@ -398,6 +398,16 @@ async def daily_message(context: ContextTypes.DEFAULT_TYPE):
         await context.bot.send_message(chat_id=chat_id, text=salam)
 
 # =========================
+# ERROR HANDLER
+# =========================
+async def error_handler(update, context: ContextTypes.DEFAULT_TYPE):
+    err = str(context.error).lower()
+    if "conflict" in err:
+        print("⚠️ Conflict: another instance detected — will keep retrying")
+    else:
+        print(f"❌ Bot error: {context.error}")
+
+# =========================
 # WEB SERVER (production WSGI — keeps Render alive)
 # =========================
 web_app = Flask(__name__)
@@ -451,10 +461,21 @@ def main():
 
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+    # Clear any existing webhook and drop stale updates before polling
+    async def delete_webhook():
+        await app.bot.delete_webhook(drop_pending_updates=True)
+        print("🔗 Webhook cleared")
+
+    loop.run_until_complete(delete_webhook())
+
+    # Give old Render instances time to shut down
+    time.sleep(5)
+
     app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("setname", setname))
     app.add_handler(MessageHandler(filters.CONTACT, handle_contact))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    app.add_error_handler(error_handler)
 
     job_queue = app.job_queue
     if job_queue:
@@ -466,7 +487,7 @@ def main():
         print("❌ Install job queue: pip install 'python-telegram-bot[job-queue]'")
 
     print("💖 Zoya Bot running...")
-    app.run_polling(drop_pending_updates=True)
+    app.run_polling(drop_pending_updates=True, allowed_updates=["message"])
 
 if __name__ == "__main__":
     main()
